@@ -126,6 +126,7 @@ venv.bak/
 dmypy.json
 
 # Dataset
-DIV2K_decoded/
+data/DIV2K/
+data/DIV2K_decoded/
 # Pyre type checker
 .pyre/

@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from model import architecture, esrt
-from data import DIV2K, Set5_val
+from model import esrt
+from data import DIV2K, Set5_val, DIV2K_val
 import utils
 import skimage.color as sc
 import random
@@ -27,15 +27,17 @@ parser.add_argument("--step_size", type=int, default=200,
                     help="learning rate decay per N epochs")
 parser.add_argument("--gamma", type=int, default=0.5,
                     help="learning rate decay factor for step decay")
-parser.add_argument("--cuda", action="store_true", default=True,
+parser.add_argument("--cuda", action="store_true", default=False,
                     help="use cuda")
+parser.add_argument("--mps", action="store_true", default=False,
+                    help="use MPS")
 parser.add_argument("--resume", default="", type=str,
                     help="path to checkpoint")
 parser.add_argument("--start-epoch", default=1, type=int,
                     help="manual epoch number")
 parser.add_argument("--threads", type=int, default=8,
                     help="number of threads for data loading")
-parser.add_argument("--root", type=str, default="/data0/luzs/dataset/",
+parser.add_argument("--root", type=str, default="/Users/alonhelvits/pythonProject/ESRT/data/DIV2K_decoded",
                     help='dataset directory')
 parser.add_argument("--n_train", type=int, default=800,
                     help="number of training set")
@@ -70,14 +72,24 @@ random.seed(seed)
 torch.manual_seed(seed)
 
 cuda = args.cuda
-device = torch.device('cuda' if cuda else 'cpu')
+mps = args.mps
+if mps:
+    device = torch.device("mps")
+elif cuda:
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
+    print("===> use cpu")
 
 print("===> Loading datasets")
 
 trainset = DIV2K.div2k(args)
-testset = Set5_val.DatasetFromFolderVal("Test_Datasets/Set5/",
-                                       "Test_Datasets/Set5_LR/x{}/".format(args.scale),
-                                       args.scale)
+#testset = Set5_val.DatasetFromFolderVal("Test_Datasets/Set5/",
+#                                       "Test_Datasets/Set5_LR/x{}/".format(args.scale),
+#                                       args.scale)
+testset = DIV2K_val.DIV2KValidSet("data/DIV2K_decoded/DIV2K_valid_HR/DIV2K_valid_HR/",
+                                  "data/DIV2K_decoded/DIV2K_valid_HR/DIV2K_valid_LR_bicubic/X{}/".format(args.scale),
+                                  args.scale)
 training_data_loader = DataLoader(dataset=trainset, num_workers=args.threads, batch_size=args.batch_size, shuffle=True, pin_memory=True, drop_last=True)
 testing_data_loader = DataLoader(dataset=testset, num_workers=args.threads, batch_size=args.testBatchSize,
                                  shuffle=False)
@@ -91,7 +103,7 @@ model = esrt.ESRT(upscale = args.scale)#architecture.IMDN(upscale=args.scale)
 l1_criterion = nn.L1Loss()
 
 print("===> Setting GPU")
-if cuda:
+if cuda or mps:
     model = model.to(device)
     l1_criterion = l1_criterion.to(device)
 

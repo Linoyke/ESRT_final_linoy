@@ -18,20 +18,20 @@ args = parser.parse_args()
 
 for (path, dirs, files) in os.walk(args.pathFrom):
     print(path)
-    targetDir = os.path.join(args.pathTo, path[len(args.pathFrom):])
-    # pdb.set_trace()
+    relative_path = os.path.relpath(path, args.pathFrom)
+    targetDir = os.path.join(args.pathTo, relative_path)
+
     if len(args.select) > 0 and path.find(args.select) == -1:
         continue
 
     if not os.path.exists(targetDir):
-        os.mkdir(targetDir)
+        os.makedirs(targetDir)  # Changed to os.makedirs() to create directories recursively
 
     if len(dirs) == 0:
         pack = {}
         n = 0
         for fileName in files:
             (idx, ext) = os.path.splitext(fileName)
-            # pdb.set_trace()
             if ext == '.png':
                 image = sio.imread(os.path.join(path, fileName))
                 if args.split:
