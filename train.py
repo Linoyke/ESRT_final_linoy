@@ -75,8 +75,10 @@ cuda = args.cuda
 mps = args.mps
 if mps:
     device = torch.device("mps")
+    print("===> use mps")
 elif cuda:
     device = torch.device("cuda")
+    print("====> use cuda")
 else:
     device = torch.device("cpu")
     print("===> use cpu")
@@ -87,12 +89,13 @@ trainset = DIV2K.div2k(args)
 #testset = Set5_val.DatasetFromFolderVal("Test_Datasets/Set5/",
 #                                       "Test_Datasets/Set5_LR/x{}/".format(args.scale),
 #                                       args.scale)
-testset = DIV2K_val.DIV2KValidSet("data/DIV2K_decoded/DIV2K_valid_HR/DIV2K_valid_HR/",
-                                  "data/DIV2K_decoded/DIV2K_valid_HR/DIV2K_valid_LR_bicubic/X{}/".format(args.scale),
+testset = DIV2K_val.DIV2KValidSet("data/DIV2K/DIV2K_valid_HR/DIV2K_valid_HR/",
+                                  "data/DIV2K/DIV2K_valid_HR/DIV2K_valid_LR_bicubic/X{}/".format(args.scale),
                                   args.scale)
 training_data_loader = DataLoader(dataset=trainset, num_workers=args.threads, batch_size=args.batch_size, shuffle=True, pin_memory=True, drop_last=True)
 testing_data_loader = DataLoader(dataset=testset, num_workers=args.threads, batch_size=args.testBatchSize,
                                  shuffle=False)
+print("testing loader length: ", len(testing_data_loader))
 
 print("===> Building models")
 args.is_train = True
@@ -156,34 +159,44 @@ def train(epoch):
             print("===> Epoch[{}]({}/{}): Loss_l1: {:.5f}".format(epoch, iteration, len(training_data_loader),
                                                                   loss_l1.item()))
 def forward_chop(model, x, scale, shave=10, min_size=60000):
+    print("Starting forward chop")
     # scale = scale#self.scale[self.idx_scale]
     n_GPUs = 1#min(self.n_GPUs, 4)
     b, c, h, w = x.size()
+    print("b, c, h, w: ", b, c, h, w)
     h_half, w_half = h // 2, w // 2
     h_size, w_size = h_half + shave, w_half + shave
+    print("h_half, w_half, h_size, w_size: ", h_half, w_half, h_size, w_size)
     lr_list = [
         x[:, :, 0:h_size, 0:w_size],
         x[:, :, 0:h_size, (w - w_size):w],
         x[:, :, (h - h_size):h, 0:w_size],
         x[:, :, (h - h_size):h, (w - w_size):w]]
-
+    print("lr_list: ", lr_list)
+    print("Starting forward")
     if w_size * h_size < min_size:
+        print("size is small")
         sr_list = []
         for i in range(0, 4, n_GPUs):
+            print("starting iteration: ", i)
+            print("Concatenating")
             lr_batch = torch.cat(lr_list[i:(i + n_GPUs)], dim=0)
+            print("starting model forward pass")
             sr_batch = model(lr_batch)
+            print("Finished model forward pass")
+            print("Exending list")
             sr_list.extend(sr_batch.chunk(n_GPUs, dim=0))
     else:
         sr_list = [
-            forward_chop(model, patch, shave=shave, min_size=min_size) \
+            forward_chop(model, patch, scale=args.scale, shave=shave, min_size=min_size) \
             for patch in lr_list
         ]
-
+    print("End forward")
     h, w = scale * h, scale * w
     h_half, w_half = scale * h_half, scale * w_half
     h_size, w_size = scale * h_size, scale * w_size
     shave *= scale
-
+    print("Setting output")
     output = x.new(b, c, h, w)
     output[:, :, 0:h_half, 0:w_half] \
         = sr_list[0][:, :, 0:h_half, 0:w_half]
@@ -200,20 +213,26 @@ def valid(scale):
     model.eval()
 
     avg_psnr, avg_ssim = 0, 0
+    print("===> Validating")
     for batch in testing_data_loader:
         lr_tensor, hr_tensor = batch[0], batch[1]
-        if args.cuda:
+        if args.cuda or args.mps:
+            print('Use gpu')
             lr_tensor = lr_tensor.to(device)
             hr_tensor = hr_tensor.to(device)
-
+        print("Starting forward")
         with torch.no_grad():
             pre = forward_chop(model, lr_tensor, scale)#model(lr_tensor)
-
+        print("End forwardchop")
+        print("transforming to numpy")
         sr_img = utils.tensor2np(pre.detach()[0])
         gt_img = utils.tensor2np(hr_tensor.detach()[0])
+        print("End transforming")
         crop_size = args.scale
+        print("Shaving")
         cropped_sr_img = utils.shave(sr_img, crop_size)
         cropped_gt_img = utils.shave(gt_img, crop_size)
+        print("End shaving")
         if args.isY is True:
             im_label = utils.quantize(sc.rgb2ycbcr(cropped_gt_img)[:, :, 0])
             im_pre = utils.quantize(sc.rgb2ycbcr(cropped_sr_img)[:, :, 0])
@@ -222,7 +241,9 @@ def valid(scale):
             im_pre = cropped_sr_img
         # print(im_pre.shape)
         # print(im_label.shape)
+        print("computing psnr")
         avg_psnr += utils.compute_psnr(im_pre, im_label)
+        print("computing ssim")
         avg_ssim += utils.compute_ssim(im_pre, im_label)
     print("===> Valid. psnr: {:.4f}, ssim: {:.4f}".format(avg_psnr / len(testing_data_loader), avg_ssim / len(testing_data_loader)))
 
