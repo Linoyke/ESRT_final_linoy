@@ -337,7 +337,7 @@ timer = utils.Timer()
 for epoch in range(args.start_epoch, args.nEpochs + 1):
     t_epoch_start = timer.t()
     epoch_start = datetime.datetime.now()
-    valid(args.scale)
+    #valid(args.scale)
     train(epoch)
     if epoch%10==0:
         save_checkpoint(epoch)
