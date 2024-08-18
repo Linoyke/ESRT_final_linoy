@@ -3,8 +3,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
 from model import esrt
 from data import DIV2K, Set5_val, DIV2K_val
+from multiprocessing.pool import ThreadPool
+import numpy as np
 import utils
 import skimage.color as sc
 import random
@@ -54,7 +57,7 @@ parser.add_argument("--n_colors", type=int, default=3,
                     help="number of color channels to use")
 parser.add_argument("--pretrained", default="", type=str,
                     help="path to pretrained models")
-parser.add_argument("--seed", type=int, default=1)
+parser.add_argument("--seed", type=int, default=3)
 parser.add_argument("--isY", action="store_true", default=True)
 parser.add_argument("--ext", type=str, default='.npy')
 parser.add_argument("--phase", type=str, default='train')
@@ -101,9 +104,36 @@ print("===> Building models")
 args.is_train = True
 
 
+# Displaying 5 random train set images
+# for i in range(5):
+#     idx = random.randint(0, len(trainset)-1)
+#     lr_tensor, hr_tensor = trainset[idx]
+
+#     # Debugging information
+#     print("LR Tensor Min:", lr_tensor.min().item())
+#     print("LR Tensor Max:", lr_tensor.max().item())
+#     print("HR Tensor Min:", hr_tensor.min().item())
+#     print("HR Tensor Max:", hr_tensor.max().item())
+#     print("LR shape: ", lr_tensor.shape)
+#     print("HR shape: ", hr_tensor.shape)
+
+#     # Convert to numpy for visualization
+#     lr_array = lr_tensor.detach().cpu().numpy()
+#     hr_array = hr_tensor.detach().cpu().numpy()
+
+#     # Plot lr_tensor and hr_tensor
+#     fig, axes = plt.subplots(1, 2)
+#     axes[0].imshow(lr_array.transpose(1, 2, 0))
+#     axes[0].set_title('lr_tensor')
+#     axes[1].imshow(hr_array.transpose(1, 2, 0))
+#     axes[1].set_title('hr_tensor')
+#     plt.show()
+
 model = esrt.ESRT(upscale = args.scale)#architecture.IMDN(upscale=args.scale)
 
 l1_criterion = nn.L1Loss()
+l2_criterion = nn.MSELoss()
+gamma = 0.1
 
 print("===> Setting GPU")
 if cuda or mps:
@@ -137,6 +167,29 @@ print("===> Setting Optimizer")
 
 optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
+def display_tensors(lr_tensor, hr_tensor):
+    # Check if the inputs are PyTorch tensors
+    if isinstance(lr_tensor, torch.Tensor):
+        lr_array = lr_tensor.detach().cpu().numpy()
+    elif isinstance(lr_tensor, np.ndarray):
+        lr_array = lr_tensor
+    else:
+        raise TypeError("lr_tensor must be either a PyTorch tensor or a NumPy array")
+    
+    if isinstance(hr_tensor, torch.Tensor):
+        hr_array = hr_tensor.detach().cpu().numpy()
+    elif isinstance(hr_tensor, np.ndarray):
+        hr_array = hr_tensor
+    else:
+        raise TypeError("hr_tensor must be either a PyTorch tensor or a NumPy array")
+    
+    # Plot lr_tensor and hr_tensor
+    fig, axes = plt.subplots(1, 2)
+    axes[0].imshow(lr_array[0].transpose(1, 2, 0))
+    axes[0].set_title('lr_tensor')
+    axes[1].imshow(hr_array[0].transpose(1, 2, 0))
+    axes[1].set_title('hr_tensor')
+    plt.show()
 
 def train(epoch):
     model.train()
@@ -144,20 +197,26 @@ def train(epoch):
     print('epoch =', epoch, 'lr = ', optimizer.param_groups[0]['lr'])
     for iteration, (lr_tensor, hr_tensor) in enumerate(training_data_loader, 1):
 
-        if args.cuda:
+        if args.cuda or args.mps:
             lr_tensor = lr_tensor.to(device)  # ranges from [0, 1]
             hr_tensor = hr_tensor.to(device)  # ranges from [0, 1]
 
         optimizer.zero_grad()
+        #print("LR tensor shape: ", lr_tensor.shape)
+        #print("HR tensor shape: ", hr_tensor.shape)
+        #Display the lr_tensor and hr_tensor on the same plot
+        
         sr_tensor = model(lr_tensor)
-        loss_l1 = l1_criterion(sr_tensor, hr_tensor)
-        loss_sr = loss_l1
+        #display_tensors(sr_tensor, hr_tensor)
+        loss = (1-gamma) * l1_criterion(sr_tensor, hr_tensor) + gamma * l2_criterion(sr_tensor, hr_tensor)
+        loss_sr = loss
 
         loss_sr.backward()
         optimizer.step()
         if iteration % 100 == 0:
             print("===> Epoch[{}]({}/{}): Loss_l1: {:.5f}".format(epoch, iteration, len(training_data_loader),
-                                                                  loss_l1.item()))
+                                                                  loss.item()))
+            
 def forward_chop(model, x, scale, shave=10, min_size=60000):
     print("Starting forward chop")
     # scale = scale#self.scale[self.idx_scale]
@@ -172,7 +231,7 @@ def forward_chop(model, x, scale, shave=10, min_size=60000):
         x[:, :, 0:h_size, (w - w_size):w],
         x[:, :, (h - h_size):h, 0:w_size],
         x[:, :, (h - h_size):h, (w - w_size):w]]
-    print("lr_list: ", lr_list)
+    #print("lr_list: ", lr_list)
     print("Starting forward")
     if w_size * h_size < min_size:
         print("size is small")
@@ -209,6 +268,7 @@ def forward_chop(model, x, scale, shave=10, min_size=60000):
 
     return output
 
+
 def valid(scale):
     model.eval()
 
@@ -241,6 +301,13 @@ def valid(scale):
             im_pre = cropped_sr_img
         # print(im_pre.shape)
         # print(im_label.shape)
+        print("Displaying images")
+        fig, axes = plt.subplots(1, 2)
+        axes[0].imshow(im_pre, cmap='gray')
+        axes[0].set_title('im_pre')
+        axes[1].imshow(im_label, cmap='gray')
+        axes[1].set_title('im_label')
+        plt.show()
         print("computing psnr")
         avg_psnr += utils.compute_psnr(im_pre, im_label)
         print("computing ssim")

@@ -4,11 +4,18 @@ import numpy as np
 import skimage.transform
 
 def resize_image(image, scale):
-    """Resize the image by the given scale factor."""
+    """Resize the image by the given scale factor and adjust pixel values."""
     height, width = image.shape[:2]
     new_height, new_width = int(height / scale), int(width / scale)
+    
+    # Resize the image
     resized_image = skimage.transform.resize(image, (new_height, new_width), anti_aliasing=True)
-    return resized_image
+    
+    # Rescale back to [0, 255] if the original image was in this range
+    if resized_image.max() <= 1.0:
+        resized_image = resized_image * 255.0
+
+    return resized_image.astype(np.uint8)  # Convert to uint8 to match original image format
 
 def process_images(input_dir, output_dir, scale):
     """Process all numpy arrays in the input directory, resize them, and save to the output directory."""
@@ -34,5 +41,4 @@ if __name__ == "__main__":
     parser.add_argument('--scale', type=int, required=True, help='Scale factor to resize images')
 
     args = parser.parse_args()
-
     process_images(args.input_dir, args.output_dir, args.scale)
