@@ -40,7 +40,7 @@ parser.add_argument("--start-epoch", default=1, type=int,
                     help="manual epoch number")
 parser.add_argument("--threads", type=int, default=8,
                     help="number of threads for data loading")
-parser.add_argument("--root", type=str, default="/Users/alonhelvits/pythonProject/ESRT/data/DIV2K_decoded",
+parser.add_argument("--root", type=str, default="/data/DIV2K_decoded",
                     help='dataset directory')
 parser.add_argument("--n_train", type=int, default=800,
                     help="number of training set")
